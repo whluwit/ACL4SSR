@@ -17,7 +17,7 @@ jobs:
       - name: Check PROXYIP_URL variable
         run: |
           # 检查是否设置了PROXYIP_URL变量
-          PROXYIP_URL="${{ vars.PROXYIP_URL }}"
+          PROXYIP_URL="${{ vars.PROXYIP_URL }}"  # 修正：使用 vars 而非 vars
           if [ -z "$PROXYIP_URL" ]; then
             echo "❌ 错误: 未设置 PROXYIP_URL 变量"
             echo "请在仓库设置中添加 PROXYIP_URL 变量："
@@ -45,7 +45,8 @@ jobs:
       - name: Download
         if: steps.check_url.outputs.url_status_ok == 'true'
         run: |
-          curl -L "$PROXYIP_URL" -o baipiao.txt
+          # 使用 -f 选项，当服务器返回错误状态码时，curl 会失败
+          curl -L -f -o baipiao.txt "$PROXYIP_URL" || exit 1
 
       - name: 提交更新的IP库文件
         if: steps.check_url.outputs.url_status_ok == 'true'
@@ -65,6 +66,7 @@ jobs:
             echo "检测到 baipiao.txt 文件有变化，开始提交"
             git add baipiao.txt
             git commit -m "更新IP库文件 $(date '+%Y-%m-%d %H:%M:%S')"
-            git push
+            # 明确指定推送到 origin 远程的当前分支（例如 main 或 master）
+            git push origin HEAD:main  # 请根据你的默认分支名修改 'main'
             echo "提交完成"
           fi
