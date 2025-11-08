@@ -1,0 +1,145 @@
+name: 更新白嫖IP库
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 21 * * *' # 每天的8点、16点执行（UTC时间）
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      # 全局定义变量，所有步骤共享
+      PROXYIP_URL: ${{ vars.PROXYIP_URL }}
+      PROXYIP_URL2: ${{ vars.PROXYIP_URL2 }}
+    steps:
+      - name: 检出代码仓库
+        uses: actions/checkout@v4
+        with:
+          # 动态获取当前分支
+          ref: ${{ github.ref }}
+
+      - name: Check PROXYIP_URL variable
+        run: |
+          if [ -z "$PROXYIP_URL" ]; then
+            echo "❌ 错误: 未设置 PROXYIP_URL 变量"
+            echo "请在仓库设置中添加 PROXYIP_URL 变量："
+            echo "1. 进入仓库 Settings > Secrets and variables > Actions"
+            echo "2. 在 Variables 标签页中添加新变量"
+            echo "3. Name: PROXYIP_URL"
+            echo "4. Value: 配置文件的URL地址"
+            exit 1
+          fi
+          echo "✅ PROXYIP_URL 变量已设置: $PROXYIP_URL"
+
+      - name: Check PROXYIP_URL2 variable
+        run: |
+          if [ -z "$PROXYIP_URL2" ]; then
+            echo "❌ 错误: 未设置 PROXYIP_URL2 变量"
+            echo "请在仓库设置中添加 PROXYIP_URL2 变量："
+            echo "1. 进入仓库 Settings > Secrets and variables > Actions"
+            echo "2. 在 Variables 标签页中添加新变量"
+            echo "3. Name: PROXYIP_URL2"
+            echo "4. Value: 第二个配置文件的URL地址"
+            exit 1
+          fi
+          echo "✅ PROXYIP_URL2 变量已设置: $PROXYIP_URL2"
+
+      - name: Check URL status
+        id: check_url
+        run: |
+          # 检查第一个URL
+          STATUS_CODE1=$(curl -s -o /dev/null -w "%{http_code}" "$PROXYIP_URL" 2>/dev/null || echo "CURL_FAIL")
+          if [[ "$STATUS_CODE1" =~ ^[0-9]+$ ]]; then
+            echo "Status code for URL1: $STATUS_CODE1"
+            if [ "$STATUS_CODE1" == "200" ]; then
+              echo "✅ URL1 响应正常，状态码为 200"
+            else
+              echo "⚠️ URL1 响应异常，状态码为 $STATUS_CODE1"
+              echo "url_status_ok=false" >> $GITHUB_OUTPUT
+              exit 0  # 继续检查第二个，但标记失败
+            fi
+          else
+            echo "❌ CURL 错误 for URL1: 无法访问 URL1 (错误类型: $STATUS_CODE1)"
+            echo "url_status_ok=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # 检查第二个URL
+          STATUS_CODE2=$(curl -s -o /dev/null -w "%{http_code}" "$PROXYIP_URL2" 2>/dev/null || echo "CURL_FAIL")
+          if [[ "$STATUS_CODE2" =~ ^[0-9]+$ ]]; then
+            echo "Status code for URL2: $STATUS_CODE2"
+            if [ "$STATUS_CODE2" == "200" ]; then
+              echo "✅ URL2 响应正常，状态码为 200"
+            else
+              echo "⚠️ URL2 响应异常，状态码为 $STATUS_CODE2"
+              echo "url_status_ok=false" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          else
+            echo "❌ CURL 错误 for URL2: 无法访问 URL2 (错误类型: $STATUS_CODE2)"
+            echo "url_status_ok=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # 两个URL都正常时设置true
+          echo "✅ 两个URL 响应正常"
+          echo "url_status_ok=true" >> $GITHUB_OUTPUT
+
+      - name: Download
+        if: steps.check_url.outputs.url_status_ok == 'true'
+        run: |
+          # 清空或创建baipiao.txt
+          > baipiao.txt
+
+          # 下载第一个URL并写入
+          for i in {1..3}; do
+            if curl -L -f -o temp1.txt "$PROXYIP_URL"; then
+              echo "✅ URL1 文件下载成功"
+              cat temp1.txt >> baipiao.txt
+              rm temp1.txt
+              break
+            else
+              echo "⚠️ URL1 下载失败，尝试 $i/3"
+              sleep 2
+            fi
+          done
+
+          # 下载第二个URL并追加
+          for i in {1..3}; do
+            if curl -L -f -o temp2.txt "$PROXYIP_URL2"; then
+              echo "✅ URL2 文件下载成功"
+              cat temp2.txt >> baipiao.txt
+              rm temp2.txt
+              break
+            else
+              echo "⚠️ URL2 下载失败，尝试 $i/3"
+              sleep 2
+            fi
+          done
+
+          # 最终检查文件是否有效
+          if [ ! -f baipiao.txt ] || [ ! -s baipiao.txt ]; then
+            echo "❌ 错误: baipiao.txt 文件无效"
+            exit 1
+          fi
+          echo "✅ baipiao.txt 已合并两个URL的内容，大小: $(wc -l < baipiao.txt) 行"
+
+      - name: 提交更新的IP库文件
+        if: steps.check_url.outputs.url_status_ok == 'true'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          # 检查文件变化
+          if git diff --exit-code --quiet baipiao.txt; then
+            echo "ℹ️ baipiao.txt 文件没有变化，跳过提交"
+          else
+            echo "✅ 检测到 baipiao.txt 文件有变化，开始提交"
+            git add baipiao.txt
+            git commit -m "更新IP库文件 (合并URL1和URL2) $(date +'%Y-%m-%d %H:%M:%S')"
+            # 动态获取当前分支
+            CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+            # 推送时使用 -u 选项设置上游分支
+            git push -u origin HEAD:$CURRENT_BRANCH
+            echo "🚀 提交完成，已推送到 $CURRENT_BRANCH 分支"
+          fi
