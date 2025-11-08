@@ -1,4 +1,4 @@
-name: 更新白嫖IP库
+name: 1108
 on:
   workflow_dispatch:
   schedule:
